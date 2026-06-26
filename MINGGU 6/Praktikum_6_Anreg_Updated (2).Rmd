@@ -1,0 +1,472 @@
+---
+title: "Praktikum 6 Anreg"
+author: "Annisa Marwah"
+date: "`r Sys.Date()`"
+output: 
+  rmdformats::readthedown
+---
+
+# Library
+
+```{r, warning = FALSE, message = FALSE}
+library(readxl)    # untuk membaca data
+library(GGally)    # untuk menghasilkan matriks hubungan antarpeubah
+library(corrplot)  # untuk menghasilkan matriks korelasi
+library(dplyr)     # untuk manipulasi data
+library(car)       # untuk memeriksa multikolinearitas
+library(stargazer) # untuk menampilkan hasil perbandingan regresi
+library(lmtest)    # untuk uji kehomogenan ragam sisaan dan saling bebas
+library(olsrr)     # untuk pemeriksaan amatan tidak biasa
+library(ggplot2)   # untuk visualisasi data
+```
+
+# Data
+
+```{r}
+dt <- read_xlsx("Data Anreg Praktikum.xlsx", sheet = "Data analisis")
+dt # menampilkan data
+```
+
+```{r}
+str(dt) # menampilkan tipe data setiap peubah
+```
+
+```{r}
+summary(dt) # menampilkan ringkasan data
+```
+
+Data yang digunakan merupakan data dengan peubah respon yaitu Kepemilikan Rumah (`Kepemilikan_Rumah`) dan beberapa peubah penjelas kuantitatif lainnya. Untuk mempermudah komputasi, kolom non-numerik (identifikasi wilayah) dihapus terlebih dahulu agar seluruh peubah yang tersisa dapat digunakan dalam analisis regresi berganda.
+
+```{r}
+# Hapus kolom non-numerik (misalnya kolom wilayah/identitas)
+dt <- dt %>% select(where(is.numeric))
+```
+
+```{r}
+# Menampilkan nama peubah yang digunakan
+cat("Peubah respon (Y) :", "Kepemilikan_Rumah", "\n")
+cat("Peubah penjelas (X):", paste(setdiff(names(dt), "Kepemilikan_Rumah"), collapse = ", "), "\n")
+```
+
+# Eksplorasi Data
+
+## Peubah Respon
+
+
+```{r}
+hist(dt$Kepemilikan_Rumah,
+     main = "Sebaran Kepemilikan Rumah",
+     xlab = "Kepemilikan Rumah",
+     ylab = "Frekuensi",
+     col = "steelblue")
+```
+
+```{r}
+boxplot(dt$Kepemilikan_Rumah,
+        main = "Sebaran Kepemilikan Rumah",
+        ylab = "Kepemilikan Rumah")
+```
+
+## Peubah Penjelas vs Peubah Respon
+
+```{r}
+# Ambil nama peubah penjelas secara dinamis
+x_vars <- setdiff(names(dt), "Kepemilikan_Rumah")
+```
+
+```{r}
+for (xvar in x_vars) {
+  plot(dt[[xvar]], dt$Kepemilikan_Rumah,
+       xlab = xvar,
+       ylab = "Kepemilikan Rumah",
+       main = paste("Plot", xvar, "vs Kepemilikan Rumah"))
+}
+```
+
+Hasil plot pencar antara masing-masing peubah penjelas terhadap Kepemilikan Rumah menunjukkan pola hubungan yang bervariasi. Beberapa peubah menunjukkan kecenderungan hubungan linear, sementara yang lain menunjukkan pola yang kurang linear atau terdapat amatan yang nilainya jauh dari amatan lainnya.
+
+## Korelasi
+
+```{r}
+ggpairs(dt,
+        upper = list(continuous = wrap('cor', size = 3)),
+        title = "Matriks Scatterplot Data Kepemilikan Rumah")
+```
+
+```{r}
+cor_matrix <- cor(dt, use = "complete.obs")
+
+corrplot(cor_matrix, method = "color", type = "lower",
+         col = colorRampPalette(c("red", "white", "blue"))(200),
+         addCoef.col = "black", tl.col = "black", tl.srt = 35)
+```
+
+Hasil matriks scatter plot dan korelasi menunjukkan hubungan antara peubah respon `Kepemilikan_Rumah` dan setiap peubah penjelas. Terdapat beberapa peubah yang memiliki korelasi cukup tinggi baik dengan peubah respon maupun dengan sesama peubah penjelas, sehingga mengindikasikan adanya potensi multikolinearitas yang perlu diperiksa lebih lanjut.
+
+# Pemodelan
+
+```{r}
+model1 <- lm(formula = Kepemilikan_Rumah ~ ., data = dt)
+summary(model1)
+```
+
+Persamaan regresi berganda yang terbentuk dari seluruh peubah penjelas menunjukkan nilai koefisien untuk masing-masing peubah. Secara simultan, uji F menunjukkan minimal terdapat satu peubah penjelas yang berpengaruh signifikan terhadap Kepemilikan Rumah. Terdapat peubah yang mengalami perubahan tanda dugaan parameter dibandingkan arah korelasinya, yang mengindikasikan kemungkinan adanya permasalahan multikolinearitas dalam model. Selanjutnya diperlukan pemeriksaan multikolinearitas dilanjutkan dengan diagnosis sisaan.
+
+# Pemeriksaan Multikolinearitas
+
+## Perubahan Peubah
+
+```{r}
+# Buat model bertahap dengan penambahan peubah satu per satu
+x_vars <- setdiff(names(dt), "Kepemilikan_Rumah")
+
+mod1 <- lm(Kepemilikan_Rumah ~ ., dt[, c("Kepemilikan_Rumah", x_vars[1])])
+mod2 <- lm(Kepemilikan_Rumah ~ ., dt[, c("Kepemilikan_Rumah", x_vars[1:2])])
+mod3 <- lm(Kepemilikan_Rumah ~ ., dt[, c("Kepemilikan_Rumah", x_vars[1:3])])
+mod4 <- lm(Kepemilikan_Rumah ~ ., dt[, c("Kepemilikan_Rumah", x_vars[1:4])])
+mod5 <- lm(Kepemilikan_Rumah ~ ., dt)
+
+stargazer(mod1, mod2, mod3, mod4, mod5,
+          type = "text", single.row = TRUE)
+```
+
+Hasil perbandingan model bertahap menunjukkan adanya perubahan tanda arah korelasi pada beberapa peubah serta perubahan dugaan parameter yang cukup besar ketika peubah lain ditambahkan ke dalam model. Hasil ini mengindikasikan adanya permasalahan multikolinearitas yang perlu ditangani.
+
+## Perubahan Banyak Data
+
+```{r}
+mod5_1 <- lm(Kepemilikan_Rumah ~ ., dt[1:round(nrow(dt)*0.7), ])
+stargazer(summary(mod5)$coefficients, summary(mod5_1)$coefficients,
+          type = "text",
+          font.size = "small")
+```
+
+Terdapat dugaan parameter yang mengalami perubahan cukup besar ketika jumlah amatan berbeda, mengindikasikan bahwa model bermasalah akibat keberadaan multikolinearitas.
+
+## Akar Ciri
+
+```{r}
+x_mat <- dt[, x_vars]
+r <- cor(x_mat)
+(ev <- eigen(r)$values)
+```
+
+```{r}
+# Simultan
+if ((max(ev) / min(ev)) <= 100) {
+  cat("Tidak ada multikolinearitas\n")
+} else if ((max(ev) / min(ev)) > 100 & (max(ev) / min(ev)) <= 1000) {
+  cat("Ada multikolinearitas yang lemah\n")
+} else {
+  cat("Ada multikolinearitas yang kuat\n")
+}
+```
+
+```{r}
+# Parsial
+if (all((max(ev) / ev) <= 1000)) {
+  cat("Tidak ada multikolinearitas\n")
+} else {
+  cat("Ada multikolinearitas pada peubah penjelas ke:", which((max(ev) / ev) > 1000), "\n")
+}
+```
+
+## Nilai VIF
+
+```{r}
+vif(model1)
+```
+
+Hasil pemeriksaan dengan akar ciri dan nilai VIF memberikan gambaran mengenai tingkat multikolinearitas pada model. Peubah dengan nilai VIF mendekati atau melebihi 10 mengindikasikan adanya hubungan linear yang kuat dengan peubah penjelas lainnya. Pada analisis ini, penanganan dilakukan dengan menyisihkan peubah yang memiliki nilai VIF tertinggi dan secara konseptual merupakan komponen dari peubah lain yang masih dipertahankan dalam model.
+
+# Pemodelan Penyisihan Peubah
+
+```{r}
+# Identifikasi peubah dengan VIF tertinggi untuk disisihkan
+vif_values <- vif(model1)
+cat("Nilai VIF masing-masing peubah:\n")
+print(vif_values)
+
+# Peubah dengan VIF tertinggi
+peubah_vif_tinggi <- names(which.max(vif_values))
+cat("\nPeubah dengan VIF tertinggi yang disisihkan:", peubah_vif_tinggi, "\n")
+
+# Peubah penjelas yang dipertahankan
+x_vars_red <- setdiff(x_vars, peubah_vif_tinggi)
+cat("Peubah penjelas yang dipertahankan:", paste(x_vars_red, collapse = ", "), "\n")
+```
+```{r}
+names(dt) <- names(dt) |>
+  trimws() |>
+  gsub("[\r\n]", "", x = _) |>
+  make.names()
+names(dt) <- trimws(gsub("[\r\n]", "", names(dt)))
+x_vars <- setdiff(names(dt), "Kepemilikan_Rumah")
+
+vif_values <- vif(model1)
+peubah_vif_tinggi <- names(which.max(vif_values))
+x_vars_red <- setdiff(x_vars, peubah_vif_tinggi)
+
+formula_red <- reformulate(
+  x_vars_red,
+  response = "Kepemilikan_Rumah"
+)
+
+model2 <- lm(formula_red, data = dt)
+summary(model2)
+```
+
+```{r}
+formula_red <- as.formula(paste("Kepemilikan_Rumah ~", paste(x_vars_red, collapse = " + ")))
+model2 <- lm(formula_red, data = dt)
+summary(model2)
+```
+
+Setelah menyisihkan peubah dengan nilai VIF tertinggi, model yang terbentuk menunjukkan dugaan parameter untuk masing-masing peubah penjelas yang tersisa. Secara simultan, model masih signifikan pada taraf nyata 5%. Apabila masih terdapat peubah yang mengalami perubahan tanda dugaan parameter dibandingkan arah korelasinya, maka perlu dilakukan pemeriksaan lebih lanjut melalui uji asumsi dan identifikasi amatan tidak biasa.
+
+## Nilai VIF
+
+```{r}
+vif(model2)
+```
+
+Model hasil reduksi peubah menunjukkan nilai VIF yang lebih kecil dibandingkan model penuh, mengindikasikan berkurangnya permasalahan multikolinearitas. Namun apabila masih terdapat peubah yang mengalami perubahan tanda, kemungkinan ada permasalahan lain yang perlu ditelusuri melalui uji asumsi dan pemeriksaan amatan tidak biasa.
+
+# Pengujian Asumsi
+
+## Eksplorasi Grafik
+
+### Plot Sisaan vs Y duga
+
+```{r}
+plot(model2, 1)
+```
+
+Hasil plot sisaan terhadap nilai dugaan memberikan informasi mengenai pemenuhan asumsi nilai harapan sisaan sama dengan nol dan kehomogenan ragam sisaan. Apabila tebaran sisaan tidak memperlihatkan pola tertentu dan tersebar merata di sekitar nol, maka kedua asumsi tersebut terpenuhi. Sebaliknya, apabila terdapat pola seperti corong atau kecenderungan naik/turun, maka terdapat indikasi pelanggaran asumsi.
+
+### Plot Sisaan vs Urutan
+
+```{r}
+plot(x = 1:dim(dt)[1],
+     y = model2$residuals,
+     type = 'b',
+     ylab = "Residuals",
+     xlab = "Observation",
+     main = "Plot Sisaan vs Urutan Amatan")
+```
+
+Tebaran sisaan terhadap urutan amatan digunakan untuk mengevaluasi asumsi kebebasan sisaan. Apabila tidak terdapat pola yang berulang atau kecenderungan tertentu, maka sisaan dapat dinyatakan saling bebas. Namun apabila terdapat pola yang menyerupai gelombang atau kecenderungan yang konsisten, maka ada indikasi autokorelasi.
+
+### QQ plot
+
+```{r}
+plot(model2, 2)
+```
+
+QQ plot digunakan untuk memeriksa asumsi kenormalan sisaan. Apabila titik-titik amatan cenderung mengikuti garis diagonal, maka asumsi normalitas sisaan terpenuhi. Penyimpangan yang signifikan dari garis diagonal mengindikasikan pelanggaran asumsi normalitas.
+
+## Uji Formal
+
+### Nilai harapan sisaan sama dengan nol
+
+```{r}
+t.test(model2$residuals, mu = 0, conf.level = 0.95)
+```
+
+Uji t digunakan untuk menguji apakah nilai harapan sisaan sama dengan nol. Apabila nilai p lebih besar dari taraf nyata 5%, maka asumsi nilai harapan sisaan sama dengan nol dinyatakan terpenuhi.
+
+### Ragam sisaan homogen
+
+```{r}
+bptest(model2)
+```
+
+Uji Breusch-Pagan digunakan untuk menguji kehomogenan ragam sisaan (homoskedastisitas). Apabila nilai p lebih besar dari taraf nyata 5%, maka asumsi ragam sisaan homogen dinyatakan terpenuhi.
+
+### Sisaan saling bebas
+
+```{r}
+dwtest(model2)
+```
+
+Uji Durbin-Watson digunakan untuk menguji apakah sisaan saling bebas (tidak terjadi autokorelasi). Apabila nilai p lebih besar dari taraf nyata 5%, maka asumsi sisaan saling bebas dinyatakan terpenuhi.
+
+### Normalitas Sisaan
+
+```{r}
+shapiro.test(model2$residuals)
+```
+
+Uji Shapiro-Wilk digunakan untuk menguji kenormalan sisaan. Apabila nilai p lebih besar dari taraf nyata 5%, maka asumsi normalitas sisaan dinyatakan terpenuhi. Jika seluruh asumsi terpenuhi namun model masih kurang baik, kemungkinan disebabkan oleh keberadaan amatan tidak biasa seperti pencilan, titik leverage, atau amatan berpengaruh yang perlu diperiksa lebih lanjut.
+
+# Pemeriksaan Amatan Tidak Biasa
+
+```{r}
+# fungsi
+ri_stud <- rstudent(model2)
+ri_stan <- rstandard(model2)
+hii_fungsi <- hatvalues(model2)
+
+# gunakan nilai fungsi langsung (tanpa perhitungan manual)
+nilai <- data.frame(
+  ri_stud = ri_stud,
+  ri_stan = ri_stan,
+  hii_fungsi = hii_fungsi
+)
+
+nilai
+```
+
+## Pencilan
+
+```{r}
+for (i in 1:dim(nilai)[1]) {
+  absri <- abs(nilai[, 2])
+  pencilan <- which(absri > 2)
+}
+pencilan
+```
+
+Amatan yang terdeteksi sebagai pencilan adalah amatan-amatan dengan nilai sisaan terstandarisasi (|r_i| > 2) yang perlu mendapat perhatian lebih lanjut dalam analisis.
+
+## Leverage
+
+```{r}
+n <- dim(dt)[1]
+p <- length(model2$coefficients)
+
+for (i in 1:dim(nilai)[1]) {
+  cutoff <- 2 * p / n
+  titik_leverage <- which(hii_fungsi > cutoff)
+}
+titik_leverage
+```
+
+Amatan yang terdeteksi sebagai titik leverage adalah amatan-amatan dengan nilai leverage (h_ii) yang melebihi ambang batas 2p/n. Titik leverage merupakan amatan dengan nilai peubah penjelas yang jauh dari rata-rata dan berpotensi memengaruhi kecocokan model.
+
+```{r}
+ols_plot_resid_lev(model2)
+```
+
+Plot yang terbentuk dari fungsi `ols_plot_resid_lev()` menyajikan gambaran visual mengenai keberadaan pencilan dan titik leverage secara bersamaan. Amatan yang teridentifikasi pada plot ini perlu diperiksa lebih lanjut untuk memastikan pengaruhnya terhadap model.
+
+## Amatan Berpengaruh
+
+### Jarak Cook
+
+```{r}
+di <- cooks.distance(model2)
+f  <- qf(0.05, p, n - p, lower.tail = FALSE)
+data.frame(di, di > f)
+```
+
+```{r}
+cooks_crit   <- f
+model_cooks  <- cooks.distance(model2)
+df_cooks     <- data.frame(obs   = names(model_cooks),
+                            cooks = model_cooks)
+
+ggplot(df_cooks, aes(y = cooks, x = obs)) +
+  geom_point() +
+  geom_hline(yintercept = cooks_crit, linetype = "dashed") +
+  labs(title    = "Cook's Distance",
+       subtitle = "Influential Observation",
+       x        = "Observation Number",
+       y        = "Cook's Distance") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+Pemeriksaan amatan berpengaruh menggunakan jarak Cook dilakukan dengan membandingkan nilai jarak Cook setiap amatan terhadap ambang batas F(0.05; p; n-p). Amatan yang melampaui ambang batas dinyatakan sebagai amatan berpengaruh yang dapat memengaruhi estimasi parameter secara keseluruhan.
+
+### DFBETAS
+
+```{r}
+ols_plot_dfbetas(model2)
+```
+
+Hasil DFBETAS menunjukkan pengaruh setiap observasi terhadap masing-masing koefisien regresi sehingga terdapat output untuk setiap parameter. DFBETAS mengukur seberapa besar koefisien regresi berubah apabila suatu observasi dihapus dari model.
+
+### DFFITS
+
+```{r}
+ols_plot_dffits(model2)
+```
+
+Hasil DFFITS menunjukkan pengaruh observasi terhadap nilai prediksi Y sehingga hanya menghasilkan satu output. DFFITS mengukur seberapa besar nilai prediksi $\hat{Y}_i$ berubah apabila suatu observasi dihapus dari model, sehingga lebih tepat digunakan untuk melihat pengaruh observasi terhadap hasil model secara keseluruhan.
+
+```{r}
+DFFITSi <- dffits(model2)
+
+amatan_berpengaruh <- vector("list", dim(nilai)[1])
+for (i in 1:dim(nilai)[1]) {
+  cutoff <- 2 * sqrt(p / n)
+  amatan_berpengaruh[[i]] <- which(abs(DFFITSi) > cutoff)
+}
+berpengaruh        <- unlist(amatan_berpengaruh)
+amatan_berpengaruh <- sort(unique(berpengaruh))
+amatan_berpengaruh
+```
+
+Amatan yang teridentifikasi memiliki nilai DFFITS melebihi ambang batas dinyatakan sebagai amatan berpengaruh yang memengaruhi nilai prediksi model secara signifikan. Amatan tersebut sangat riskan apabila disisihkan dan perlu ditelusuri lebih lanjut.
+
+# Pemodelan Penyisihan Amatan
+
+```{r}
+# Gunakan peubah penjelas yang sudah diseleksi (formula_red dari pemodelan sebelumnya)
+
+# Identifikasi amatan tidak biasa: pencilan, leverage, dan amatan berpengaruh
+amatan_12 <- pencilan[1]      # amatan pertama yang terdeteksi sebagai pencilan
+amatan_21 <- amatan_berpengaruh[1]  # amatan pertama yang terdeteksi berpengaruh
+amatan_22 <- titik_leverage[1]     # amatan pertama yang terdeteksi sebagai leverage
+
+dt1 <- dt %>% slice(-amatan_12)
+model3 <- lm(formula_red, dt1)
+
+dt2 <- dt %>% slice(-amatan_21)
+model4 <- lm(formula_red, dt2)
+
+dt3 <- dt %>% slice(-amatan_22)
+model5 <- lm(formula_red, dt3)
+
+dt4 <- dt %>% slice(-c(amatan_12, amatan_21))
+model6 <- lm(formula_red, dt4)
+
+dt5 <- dt %>% slice(-c(amatan_12, amatan_22))
+model7 <- lm(formula_red, dt5)
+
+dt6 <- dt %>% slice(-c(amatan_21, amatan_22))
+model8 <- lm(formula_red, dt6)
+
+dt7 <- dt %>% slice(-c(amatan_12, amatan_21, amatan_22))
+model9 <- lm(formula_red, dt7)
+```
+
+```{r}
+get_metrics <- function(model) {
+  adj_r2 <- summary(model)$adj.r.squared
+  sse    <- sum(model$residuals^2)
+  return(c(adj_r2, sse))
+}
+
+model_metrics <- data.frame(
+  Model        = c("Model 2", "Model 3", "Model 4", "Model 5",
+                   "Model 6", "Model 7", "Model 8", "Model 9"),
+  Adjusted_R2  = sapply(list(model2, model3, model4, model5,
+                             model6, model7, model8, model9),
+                        function(m) get_metrics(m)[1]),
+  SSE          = sapply(list(model2, model3, model4, model5,
+                             model6, model7, model8, model9),
+                        function(m) get_metrics(m)[2])
+)
+
+print(model_metrics)
+```
+
+Berdasarkan hasil perbandingan model, model terbaik dipilih berdasarkan nilai adjusted R-squared tertinggi dan SSE terkecil. Model dengan penyisihan amatan yang tepat diharapkan menghasilkan estimasi parameter yang lebih stabil dan akurat dibandingkan model yang menggunakan seluruh amatan.
+
+```{r}
+stargazer(model2, model4, model9, type = "text", font.size = "small",
+          report = "vc*p")
+```
+
+Perbandingan antara model tanpa penyisihan amatan (model2), model dengan penyisihan amatan berpengaruh tunggal (model4), dan model dengan penyisihan beberapa amatan sekaligus (model9) menunjukkan perbedaan nilai dugaan parameter, tingkat signifikansi, serta kualitas kecocokan model. Model yang menghasilkan koefisien dengan tanda yang sesuai dengan arah korelasi dan nilai adjusted R-squared yang lebih tinggi dapat dijadikan pertimbangan sebagai model terbaik.
