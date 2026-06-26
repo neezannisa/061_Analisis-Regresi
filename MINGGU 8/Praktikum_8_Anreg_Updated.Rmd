@@ -1,0 +1,172 @@
+---
+title: "Praktikum 8 Analisis Regresi"
+author: "Annisa Marwah"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown
+---
+
+# Package
+
+```{r}
+library(readxl)
+library(car) # untuk multikolinearitas
+library(olsrr) # untuk best subset
+library(MASS) # untuk forward, backward, dan stepwise
+library(glmnet) # untuk ridge dan lasso
+```
+
+# Uji F Parsial dan Sekuensial
+
+```{r}
+data(mtcars)
+head(mtcars)
+```
+Kita Pakai : Y = mpg, X1 = wt, X2 = hp, X3 = disp
+
+## F Sekuensial
+
+```{r}
+# Model 1: tanpa prediktor
+m1 <- lm(mpg ~ 1, data = mtcars)
+
+# Model 2: tambah wt
+m2 <- lm(mpg ~ wt, data = mtcars)
+
+# Model 3: tambah hp
+m3 <- lm(mpg ~ wt + hp, data = mtcars)
+
+# Model 4 : tambah disp
+m4 <- lm(mpg ~ wt + hp + disp, data = mtcars)
+
+```
+
+
+```{r}
+anova(m1, m2, m3, m4)
+```
+Variabel wt berpengaruh signifikan terhadap mpg (p < 0.001).
+Setelah memasukkan wt, variabel hp masih memberikan tambahan pengaruh yang signifikan (p ≈ 0.0018).
+Namun, setelah wt dan hp ada dalam model, variabel disp tidak memberikan pengaruh tambahan yang signifikan (p ≈ 0.93).
+
+Kesimpulan: Model yang cukup baik adalah mpg∼wt+hp, karena penambahan disp tidak meningkatkan kemampuan model secara signifikan.
+
+## F Parsial
+
+Akan diuji apakah hp signifikan setelah semua variabel lain dikontrol
+```{r}
+# full model
+full <- lm(mpg ~ wt + hp + disp, data = mtcars)
+
+# reduced (tanpa hp)
+red <- lm(mpg ~ wt + disp, data = mtcars)
+
+anova(red, full)
+```
+Variabel hp berpengaruh signifikan terhadap mpg setelah mengontrol wt dan disp (p < 0.05).
+
+
+# Data
+
+Data yang digunakan memiliki 34 amatan berupa Provinsi di Indonesia dengan 1 peubah respon yaitu persentase kepemilikan rumah (`Kepemilikan_Rumah`) dan 6 peubah penjelas, yaitu PDRB harga berlaku (`PDRB_harga_berlaku`), Consumer Price Index (`Consumer_Price_Index`), Tingkat Pengangguran Terbuka (`TPT`), persentase Urbanisasi (`Urbanisasi`), Gini Ratio (`Gini_Ratio`), dan Rata-rata Lama Sekolah (`Rata_rata_Lama_Sekolah`).
+
+```{r}
+data <- read_xlsx("Data Anreg Praktikum.xlsx", sheet = "Data analisis")
+
+# Bersihkan nama kolom dari spasi dan karakter khusus
+names(data) <- trimws(names(data))
+names(data) <- gsub("-", "_", names(data))
+
+# Pilih kolom yang diperlukan (tanpa Provinsi)
+data <- data[, c("Kepemilikan_Rumah", "PDRB_harga_berlaku", "Consumer_Price_Index",
+                 "TPT", "Urbanisasi", "Gini_Ratio", "Rata_rata_Lama_Sekolah")]
+data
+```
+
+# Pemodelan Awal
+
+```{r}
+model1 <- lm(Kepemilikan_Rumah ~ ., data = data)
+summary(model1)
+```
+
+Persamaan regresi yang terbentuk dari seluruh peubah penjelas menghasilkan nilai koefisien determinasi (R-squared) sebesar 73.40% dan Adjusted R-squared sebesar 67.49%. Dari keenam peubah penjelas, hanya peubah `Rata_rata_Lama_Sekolah` yang signifikan pada taraf nyata 5% (p-value < 0.001), sementara peubah lainnya (`PDRB_harga_berlaku`, `Consumer_Price_Index`, `TPT`, `Urbanisasi`, dan `Gini_Ratio`) tidak signifikan. Selanjutnya akan diperiksa ada tidaknya multikolinearitas pada model.
+
+$$\hat{Kepemilikan\_Rumah} = 87.68 - 0.000002\,PDRB\_harga\_berlaku + 0.6272\,Consumer\_Price\_Index - 0.0220\,TPT - 0.0954\,Urbanisasi + 16.990\,Gini\_Ratio - 7.2279\,Rata\_rata\_Lama\_Sekolah$$
+
+# Pemeriksaan Multikolinieritas
+
+```{r}
+vif(model1)
+```
+
+Hasil pemeriksaan nilai VIF menunjukkan semua peubah penjelas memiliki VIF < 10, sehingga tidak terdapat masalah multikolinearitas yang serius pada model awal. Nilai VIF terbesar dimiliki oleh peubah `Urbanisasi` (VIF ≈ 1.87), diikuti oleh `Rata_rata_Lama_Sekolah` (VIF ≈ 1.77) dan `PDRB_harga_berlaku` (VIF ≈ 1.73), namun kesemuanya masih jauh di bawah ambang batas 10. Dengan demikian, seluruh peubah penjelas dapat dipertahankan dalam proses seleksi peubah berikutnya.
+
+# Penyeleksian Peubah
+
+## Best Subset
+
+```{r}
+bs <- ols_step_best_subset(model1)
+bs
+```
+
+## Backward, Forward, dan Stepwise
+
+```{r}
+null <- lm(Kepemilikan_Rumah ~ 1, data = data) # 1 here means the intercept
+full <- lm(Kepemilikan_Rumah ~ ., data = data)
+
+step(full, scope = list(lower = null, upper = full), data = data, direction = 'backward', trace = 0)
+```
+
+```{r}
+step(null, scope = list(lower = null, upper = full), data = data, direction = 'forward', trace = 0)
+```
+
+```{r}
+step(null, scope = list(lower = null, upper = full), data = data, direction = 'both', trace = 0)
+```
+
+Hasil penyeleksian melalui best subset, backward, forward, dan stepwise menghasilkan model yang sama, yaitu dengan 3 peubah penjelas (`PDRB_harga_berlaku`, `Urbanisasi`, dan `Rata_rata_Lama_Sekolah`).
+
+```{r}
+model2 <- lm(Kepemilikan_Rumah ~ PDRB_harga_berlaku + Urbanisasi + Rata_rata_Lama_Sekolah, data = data)
+summary(model2)
+```
+
+```{r}
+AIC(model2); BIC(model2)
+```
+
+Model hasil seleksi peubah memiliki nilai Adjusted R-squared sebesar 69.29%, lebih besar dibandingkan model awal dengan semua peubah (67.49%), menunjukkan bahwa model dengan 3 peubah ini lebih efisien. Nilai AIC sebesar 103.84 dan BIC sebesar 109.95. Dari ketiga peubah yang masuk, `Rata_rata_Lama_Sekolah` merupakan peubah yang paling signifikan (p < 0.001) dengan pengaruh negatif terhadap kepemilikan rumah, yang mengindikasikan bahwa provinsi dengan rata-rata lama sekolah lebih tinggi cenderung memiliki persentase kepemilikan rumah yang lebih rendah — kemungkinan berkaitan dengan tingginya biaya hidup dan sewa di wilayah perkotaan yang lebih terdidik.
+
+$$\hat{Kepemilikan\_Rumah} = 158.12 - 0.000002\,PDRB\_harga\_berlaku - 0.0975\,Urbanisasi - 6.9484\,Rata\_rata\_Lama\_Sekolah$$
+
+Jika pada metode seleksi peubah yang digunakan menghasilkan model yang berbeda, maka bisa dibandingkan nilai MSE, adjusted R-square, AIC, BIC, dan kriteria lainnya.
+
+# Shrinkage Methods
+
+## Ridge
+
+```{r}
+x <- as.matrix(data[, -1])
+y <- data$Kepemilikan_Rumah
+
+rid <- cv.glmnet(x, y, alpha = 0, nfolds = 5)  # Ridge regression
+# secara default, nfolds = 10 sehingga akan buruk ketika n<30
+rid
+coef(rid, s = "lambda.min")
+```
+
+Model ridge menggunakan semua peubah penjelas dengan melakukan penyusutan (shrinkage) terhadap koefisien regresi tanpa menyetarakan koefisien menjadi nol. Peubah `Rata_rata_Lama_Sekolah` dan `Urbanisasi` memiliki koefisien negatif yang dominan, konsisten dengan temuan pada model seleksi peubah. Pemodelan ridge akan lebih terlihat berguna jika digunakan pada data yang terdapat multikolinearitas, sehingga tidak perlu menyisihkan peubah yang memiliki VIF > 10.
+
+## Lasso
+
+```{r}
+lass <- cv.glmnet(x, y, alpha = 1, nfolds = 5)
+lass
+coef(lass, s = "lambda.min")
+```
+
+Lasso menghasilkan pemodelan regresi dengan penyusutan sekaligus penyeleksian peubah. Peubah yang koefisiennya menyusut hingga tepat nol secara otomatis dikeluarkan dari model. Dengan demikian, Lasso menghasilkan model yang lebih parsimoni dibandingkan Ridge. Hasil Lasso diharapkan konsisten dengan metode seleksi peubah sebelumnya, di mana peubah `Rata_rata_Lama_Sekolah` dan `Urbanisasi` menjadi prediktor utama persentase kepemilikan rumah di 34 provinsi Indonesia, sementara peubah yang kurang informatif seperti `TPT` dan `Consumer_Price_Index` kemungkinan terseleksi keluar (koefisien = 0).
