@@ -1,0 +1,270 @@
+---
+title: "Praktikum 5 Anreg"
+author: "Annisa Marwah"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown
+---
+
+# Library
+
+```{r}
+library(readxl) # untuk membaca data
+library(GGally) # untuk menghasilkan matriks hubungan antarpeubah
+library(corrplot) # untuk menghasilkan matriks korelasi
+library(dplyr) # untuk manipulasi data
+library(car) # untuk memeriksa multikolinearitas
+```
+
+# Data
+
+```{r}
+data <- read_excel("Data Anreg Praktikum.xlsx", sheet = "Data analisis")
+# Membersihkan nama kolom dari whitespace/newline
+names(data) <- trimws(names(data))
+head(data) # menampilkan sekian data awal
+str(data)  # menampilkan tipe data setiap peubah
+summary(data) # menampilkan ringkasan data
+```
+
+Data yang digunakan adalah data dari 34 Provinsi di Indonesia pada Tahun 2024 dengan 1 peubah respon yaitu Persentase Kepemilikan Rumah (Kepemilikan_Rumah) dan 6 peubah penjelas yang seluruhnya bersifat kuantitatif. Peubah tersebut adalah PDRB Harga Berlaku (PDRB_harga_berlaku), Consumer Price Index (Consumer_Price_Index), Tingkat Pengangguran Terbuka (TPT), Persentase Urbanisasi (Urbanisasi), Gini Ratio (Gini_Ratio), dan Rata-rata Lama Sekolah (Rata-rata_Lama_Sekolah).
+
+Untuk mempermudah dalam komputasi, karena peubah Provinsi tidak digunakan dalam pemodelan, maka dapat dihapus. Pada praktikum kali ini seluruh peubah yang digunakan bersifat kuantitatif sehingga dibentuk satu data analisis.
+
+```{r}
+data <- select(data, -Provinsi)
+dt <- data
+```
+
+# Eksplorasi data
+
+```{r}
+hist(dt$Kepemilikan_Rumah, main = "Sebaran Persentase Kepemilikan Rumah")
+```
+
+```{r}
+boxplot(dt$Kepemilikan_Rumah, main = "Sebaran Persentase Kepemilikan Rumah")
+```
+
+```{r}
+ggpairs(dt,
+        upper = list(continuous = wrap('cor', size = 3)),
+        title = "Matriks Scatterplot Data")
+
+```
+
+```{r}
+cor_matrix <- cor(dt, use = "complete.obs")
+
+corrplot(cor_matrix, method = "color", type = "lower",
+         col = colorRampPalette(c("red", "white", "blue"))(200),
+         addCoef.col = "black", tl.col = "black", tl.srt = 35)
+```
+
+Hasil matriks scatter plot dan korelasi menunjukkan bahwa peubah respon Kepemilikan_Rumah memiliki hubungan negatif dengan PDRB_harga_berlaku, Consumer_Price_Index, Urbanisasi, Gini_Ratio, dan Rata-rata_Lama_Sekolah, serta hubungan positif dengan TPT. Beberapa peubah menunjukkan korelasi yang signifikan dengan Kepemilikan_Rumah.
+
+Selain itu, terdapat beberapa korelasi yang cukup tinggi antar peubah penjelas. Beberapa di antaranya adalah:
+1. Rata-rata_Lama_Sekolah dan Urbanisasi memiliki korelasi positif yang cukup kuat.
+2. PDRB_harga_berlaku dengan Urbanisasi menunjukkan korelasi positif.
+3. Gini_Ratio dengan Urbanisasi dan Rata-rata_Lama_Sekolah menunjukkan korelasi positif yang cukup besar.
+
+Korelasi yang tinggi ini mengindikasikan adanya potensi multikolinearitas, yang dapat mempengaruhi keakuratan model yang akan dibentuk.
+
+# Pemodelan
+
+## Tanpa Fungsi
+
+Perhitungan nilai $\hat{\beta}$ secara matriks dapat dilakukan dengan rumus berikut.
+
+$$\hat{\beta} = (X'X)^{-1} X'y$$
+
+```{r}
+# pembentukan matriks
+# PDRB_harga_berlaku diskala (dibagi 1000) agar matriks X'X tidak singular
+n <- nrow(dt)
+x0 <- rep(1, n)
+x <- data.frame(x0,
+                PDRB_harga_berlaku  = dt$PDRB_harga_berlaku / 1000,
+                Consumer_Price_Index = dt$Consumer_Price_Index,
+                TPT                 = dt$TPT,
+                Urbanisasi          = dt$Urbanisasi,
+                Gini_Ratio          = dt$Gini_Ratio,
+                Rata_rata_Lama_Sekolah = dt$`Rata-rata_Lama_Sekolah`)
+x <- as.matrix(x)
+y <- dt$Kepemilikan_Rumah
+```
+
+```{r}
+beta_duga <- solve(t(x) %*% x) %*% t(x) %*% y
+beta_duga
+```
+
+Hasil tersebut menjelaskan bahwa persamaan regresi yang terbentuk adalah:
+$$\hat{Kepemilikan\_Rumah}=\hat{\beta}_0+\hat{\beta}_1 PDRB\_harga\_berlaku+\hat{\beta}_2 Consumer\_Price\_Index+\hat{\beta}_3 TPT+\hat{\beta}_4 Urbanisasi+\hat{\beta}_5 Gini\_Ratio+\hat{\beta}_6 Rata\text{-}rata\_Lama\_Sekolah$$
+
+Selang kepercayaan dan pengujian signifikansi setiap parameter dapat dilakukan dengan menghitung keragaman tiap dugaan parameter. Secara umum, nilai ragam dugaan parameter $\hat{\beta}_j$ dapat dihitung melalui rumus berikut.
+
+$$Var(\hat{\beta}_j) = \hat{\sigma}^2 C_{jj}$$
+Dengan matriks $C$ adalah matriks $(X'X)^{-1}$ 
+
+```{r}
+c <- data.frame(solve(t(x)%*%x))
+```
+
+Unsur diagonal dari matriks $C$ dapat digunakan untuk menghitung nilai galat baku dari setiap dugaan parameter. Galat baku ini dapat digunakan untuk menghitung selang kepercayaan dari dugaan yang dihasilkan.
+
+$$SE(\hat{\beta}_j) = \sqrt{Var(\hat{\beta}_j)} = \sqrt{\sigma^2 C_{jj}} = \hat{\sigma}\sqrt{c_{ii}}$$
+
+Misal ingin dihitung selang kepercayaan dari dugaan parameter $\beta_2$, maka
+
+```{r}
+y_hat <- x %*% beta_duga
+residuals <- y - y_hat
+n <- nrow(x)
+p <- ncol(x)
+KTG <- sum(residuals^2) / (n - p) 
+
+c22 <- c[2,2]
+
+(se.b2 <- sqrt(KTG*c22))
+```
+
+```{r}
+alfa <- 0.05
+
+#Batas Bawah beta2
+(bb.b2 <- beta_duga[3,1] - abs(qt(alfa/2, df=n-p))*se.b2)
+```
+
+```{r}
+#Batas Atas beta2
+(ba.b2 <- beta_duga[3,1] + abs(qt(alfa/2, df=n-p))*se.b2)
+```
+
+Dengan demikian, kita dapat mengetahui selang kepercayaan untuk $\hat{\beta}_2$ berdasarkan hasil perhitungan di atas. Apabila selang kepercayaan tersebut mencakup nilai 0, maka dapat dimaknai bahwa dugaan parameter $\hat{\beta}_2$ tidak signifikan dalam taraf nyata 5%.
+
+
+# Dengan Fungsi
+
+```{r}
+model1 <- lm(formula = Kepemilikan_Rumah ~ ., data = dt)
+summary(model1)
+```
+
+Dugaan parameter model secara matriks dan fungsi menghasilkan angka yang sama, sehingga perhitungan matriks memang sudah tepat. Pada ringkasan model ini dapat dilihat apakah terdapat parameter yang signifikan pada taraf nyata 5% dan apakah model secara simultan signifikan. Jika tidak ada parameter yang signifikan secara parsial namun model signifikan secara simultan, hal ini mengindikasi kemungkinan terjadinya pelanggaran asumsi sisaan maupun multikolinearitas.
+
+# Pemeriksaan Multikoliniearitas
+
+```{r}
+vif(model1)
+```
+
+Hasil uji VIF ini digunakan untuk mendeteksi adanya multikolinearitas pada model pertama. Apabila terdapat peubah dengan nilai VIF yang sangat tinggi (>10), maka peubah tersebut perlu dipertimbangkan untuk dihapus dari model. Pada analisis kali ini, penanganan dilakukan dengan menghapus peubah dengan nilai VIF tertinggi hingga seluruh peubah yang tersisa memiliki VIF yang wajar.
+
+# Pemodelan Kedua
+
+```{r}
+model2 <- lm(Kepemilikan_Rumah ~ Consumer_Price_Index + TPT + Urbanisasi + Gini_Ratio + `Rata-rata_Lama_Sekolah`, data = dt)
+summary(model2)
+```
+
+```{r}
+vif(model2)
+```
+
+Model hasil reduksi peubah menunjukkan apakah nilai VIF sudah berada di bawah ambang batas 10 sehingga dapat dinyatakan tidak terjadi multikolinearitas. Apabila masih terdapat parameter yang tidak signifikan secara parsial, perlu dilakukan uji asumsi dan pemeriksaan pencilan, leverage, serta amatan berpengaruh untuk mengetahui permasalahan lain yang mungkin belum tertangani.
+
+# Pemodelan Dummy
+
+Pada data yang digunakan, seluruh peubah penjelas bersifat kuantitatif sehingga tidak terdapat peubah kualitatif yang perlu dikodekan menjadi peubah dummy. Sebagai ilustrasi proses pemodelan dengan peubah dummy, pada bagian ini dibentuk peubah kategori baru berdasarkan tingkat Urbanisasi, yaitu "Rendah" (Urbanisasi < 40), "Sedang" (40 ≤ Urbanisasi < 70), dan "Tinggi" (Urbanisasi ≥ 70).
+
+```{r}
+data$Kat_Urbanisasi <- cut(data$Urbanisasi,
+                           breaks = c(-Inf, 40, 70, Inf),
+                           labels = c("Rendah", "Sedang", "Tinggi"))
+data$Kat_Urbanisasi <- as.factor(data$Kat_Urbanisasi)
+str(data)
+```
+
+```{r}
+model3 <- lm(Kepemilikan_Rumah ~ PDRB_harga_berlaku + Consumer_Price_Index + TPT +
+               Urbanisasi + Gini_Ratio + `Rata-rata_Lama_Sekolah` + Kat_Urbanisasi,
+             data = data)
+summary(model3)
+```
+
+Persamaan yang terbentuk dari pemodelan ini menyertakan peubah dummy Kat_Urbanisasi dengan kategori referensi "Rendah". Interpretasi pada peubah dummy adalah sebagai berikut:
+
+1. Provinsi dengan kategori Urbanisasi Sedang memiliki dugaan rata-rata persentase kepemilikan rumah yang berbeda dibanding provinsi dengan kategori Urbanisasi Rendah, dengan selisih sebesar nilai koefisien dummy tersebut, apabila peubah lain dianggap konstan.
+2. Provinsi dengan kategori Urbanisasi Tinggi memiliki dugaan rata-rata persentase kepemilikan rumah yang berbeda dibanding provinsi dengan kategori Urbanisasi Rendah, dengan selisih sebesar nilai koefisien dummy tersebut, apabila peubah lain dianggap konstan.
+
+# Uji Hipotesis Kesamaan Parameter Regresi
+
+Misal ingin dilakukan pemodelan dengan peubah respon Persentase Kepemilikan Rumah dengan 4 peubah penjelas, yaitu Consumer_Price_Index, TPT, Urbanisasi, dan Gini_Ratio.
+
+```{r}
+model4 <- lm(Kepemilikan_Rumah ~ Consumer_Price_Index + TPT + Urbanisasi + Gini_Ratio, data = dt)
+summary(model4)
+```
+
+```{r}
+vif(model4)
+```
+
+Regresi yang dihasilkan diperiksa apakah mengalami masalah multikolinearitas. Hasil tersebut menunjukkan peubah mana yang signifikan dan mana yang tidak pada taraf nyata 5%. Berikut adalah persamaan yang terbentuk berdasarkan koefisien hasil estimasi model di atas.
+
+Hasil pemodelan tersebut dapat dilakukan serangkaian uji untuk memeriksa apakah $\beta_3$ dan $\beta_4$ dapat diasumsikan sama ketika parameter lainnya tidak signifikan atau diasumsikan sama dengan nol.
+
+Hipotesis yang diuji adalah
+
+$$H_0: \beta_3=\beta_4$$
+$$H_1: \beta_3 \neq \beta_4$$
+
+Karena peubah Consumer_Price_Index dan Gini_Ratio yang tidak signifikan dapat diasumsikan nol sehingga model dapat disederhanakan menjadi:
+
+$$Kepemilikan\_Rumah=\beta_0+\beta_3 TPT+\beta_4 Urbanisasi+\varepsilon$$
+Jika $H_0$ benar $(\beta_3=\beta_4=\beta_1')$, model bisa ditulis ulang sebagai
+
+$$Kepemilikan\_Rumah=\beta_0+\beta_1' (TPT+Urbanisasi)+\varepsilon$$
+
+```{r}
+# Buat peubah baru
+dt$X_new <- dt$TPT + dt$Urbanisasi
+
+# Model penuh (Full Model)
+model_full <- lm(Kepemilikan_Rumah ~ TPT + Urbanisasi, data = dt)
+
+# Model terbatas (Restricted Model)
+model_restricted <- lm(Kepemilikan_Rumah ~ X_new, data = dt)
+
+# Bandingkan dengan Uji F
+anova(model_restricted, model_full)
+```
+
+Hasil perbandingan menunjukkan apakah nilai p lebih kecil atau lebih besar dari alpha. Apabila nilai p < alpha, maka tolak H0, artinya peubah TPT dan Urbanisasi memiliki koefisien yang berbeda secara signifikan sehingga tidak dapat digabung. Selanjutnya dapat dipilih apakah akan menggunakan model dengan 4 peubah atau hanya 2 peubah berdasarkan indikator Adjusted R-Squared, AIC, dan BIC.
+
+```{r}
+model_all <- lm(Kepemilikan_Rumah ~ Consumer_Price_Index + TPT + Urbanisasi + Gini_Ratio, data = dt)
+summary(model_all)
+```
+
+```{r}
+model_signif <- lm(Kepemilikan_Rumah ~ TPT + Urbanisasi, data = dt)
+summary(model_signif)
+```
+
+```{r}
+perbandingan <- data.frame(
+  Model = c("Peubah Penuh", "Peubah Signifikan"),
+  Adjusted_R2 = as.numeric(c(summary(model_all)$adj.r.squared, summary(model_signif)$adj.r.squared)),
+  AIC = as.numeric(c(AIC(model_all), AIC(model_signif))),
+  BIC = as.numeric(c(BIC(model_all), BIC(model_signif)))
+)
+perbandingan
+```
+
+Berdasarkan indikator Adjusted R-Squared, AIC, dan BIC maka dipilih model yang memiliki nilai Adjusted R-Squared lebih tinggi serta nilai AIC dan BIC lebih rendah sebagai model terbaik. Interpretasi model terpilih adalah sebagai berikut:
+
+1. Dugaan rataan persentase kepemilikan rumah ketika TPT dan Urbanisasi bernilai 0 adalah sebesar nilai konstanta $\hat{\beta}_0$ yang dihasilkan.
+2. Dugaan rataan persentase kepemilikan rumah akan berubah sebesar nilai koefisien $\hat{\beta}_{TPT}$ apabila TPT meningkat satu persen dengan asumsi tingkat Urbanisasi konstan.
+3. Dugaan rataan persentase kepemilikan rumah akan berubah sebesar nilai koefisien $\hat{\beta}_{Urbanisasi}$ apabila Urbanisasi meningkat satu persen dengan asumsi TPT konstan.
